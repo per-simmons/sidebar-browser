@@ -1,0 +1,41 @@
+{
+  "name": "sidebar-browser",
+  "productName": "Sidebar",
+  "version": "0.1.0",
+  "description": "Minimal browser: a hideable vertical sidebar, no tab strip, no bookmarks bar.",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --mac --dir"
+  },
+  "build": {
+    "appId": "studio.persimmons.sidebar",
+    "productName": "Sidebar",
+    "mac": {
+      "target": "dir",
+      "category": "public.app-category.productivity",
+      "identity": null,
+      "extendInfo": {
+        "CFBundleURLTypes": [
+          {
+            "CFBundleURLName": "Web",
+            "CFBundleURLSchemes": [
+              "http",
+              "https"
+            ]
+          }
+        ],
+        "NSMicrophoneUsageDescription": "Websites may ask to use the microphone.",
+        "NSCameraUsageDescription": "Websites may ask to use the camera."
+      }
+    },
+    "files": [
+      "src/**/*",
+      "package.json"
+    ]
+  },
+  "devDependencies": {
+    "electron": "^45.3.3",
+    "electron-builder": "^26.18.0"
+  }
+}
