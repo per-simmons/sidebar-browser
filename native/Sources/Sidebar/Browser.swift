@@ -28,6 +28,9 @@ final class Tab: ObservableObject, Identifiable {
     var faviconURL: URL?
     var pinned: Bool
     var webView: WKWebView?
+    /// Asleep = page unloaded to free memory; it reloads when clicked.
+    @Published var sleeping = false
+    var lastActive = Date()
     var observations: [NSKeyValueObservation] = []
 
     init(url: URL?, title: String, pinned: Bool) {
@@ -135,6 +138,7 @@ final class Browser: NSObject, ObservableObject {
     @discardableResult
     func ensureWebView(_ tab: Tab) -> WKWebView {
         if let wv = tab.webView { return wv }
+        tab.sleeping = false
         let wv = makeWebView(for: tab)
         wv.load(URLRequest(url: tab.url ?? Self.home))
         return wv
@@ -162,6 +166,8 @@ final class Browser: NSObject, ObservableObject {
 
     func activate(_ tab: Tab) {
         guard tabs.contains(where: { $0 === tab }) else { return }
+        active?.lastActive = Date()
+        tab.lastActive = Date()
         activeID = tab.id
         let wv = ensureWebView(tab)
         canGoBack = wv.canGoBack
@@ -221,6 +227,71 @@ final class Browser: NSObject, ObservableObject {
     }
 
     func closeUnpinned() { todayTabs.forEach(close) }
+
+    // MARK: Memory: put idle tabs to sleep
+
+    /// Each open page lives in its own WebKit process (often 100–300 MB). Pages you haven't
+    /// looked at for a while are unloaded and reload instantly-ish when clicked. Tabs playing
+    /// audio/video or using the camera/mic are never put to sleep.
+    static let idleBeforeSleep: TimeInterval =
+        ProcessInfo.processInfo.environment["SB_SLEEP_SECS"].flatMap(Double.init) ?? 10 * 60
+    private var memoryTimer: Timer?
+    private var pressureSource: DispatchSourceMemoryPressure?
+
+    func startMemoryManagement() {
+        let interval = min(60, max(2, Self.idleBeforeSleep / 4))
+        memoryTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.sleepIdleTabs(olderThan: Self.idleBeforeSleep) }
+        }
+        // When macOS says memory is tight, sleep every background tab right away.
+        let src = DispatchSource.makeMemoryPressureSource(eventMask: [.warning, .critical], queue: .main)
+        src.setEventHandler { [weak self] in
+            MainActor.assumeIsolated { self?.sleepIdleTabs(olderThan: 0) }
+        }
+        src.resume()
+        pressureSource = src
+    }
+
+    func sleepIdleTabs(olderThan age: TimeInterval) {
+        let now = Date()
+        var slept = false
+        for tab in tabs where tab.webView != nil && tab.id != activeID
+            && now.timeIntervalSince(tab.lastActive) >= age {
+            guard let wv = tab.webView else { continue }
+            if wv.cameraCaptureState != .none || wv.microphoneCaptureState != .none { continue }
+            if isPlayingAudio(wv) { continue }
+            sleep(tab)
+            slept = true
+        }
+        if slept { DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in MainActor.assumeIsolated { self?.dropCachedProcesses() } } }
+    }
+
+    /// WebKit parks the processes of closed pages in a reuse cache (~30 min). Empty it so a
+    /// sleeping tab really gives its memory back. Internal WebKit call; skipped if it's ever removed.
+    private func dropCachedProcesses() {
+        guard let pool = (active?.webView ?? tabs.lazy.compactMap(\.webView).first)?
+            .configuration.value(forKey: "processPool") as? NSObject else { return }
+        let sel = NSSelectorFromString("_clearWebProcessCache")
+        if pool.responds(to: sel) { pool.perform(sel) }
+    }
+
+    /// WebKit tracks whether a page is making sound (incl. cross-origin iframes like YouTube
+    /// embeds); requestMediaPlaybackState() never answers for off-screen views, so read that flag.
+    private func isPlayingAudio(_ wv: WKWebView) -> Bool {
+        let sel = NSSelectorFromString("_isPlayingAudio")
+        if wv.responds(to: sel), let playing = wv.value(forKey: "_isPlayingAudio") as? Bool { return playing }
+        return true // can't tell: stay safe and keep the tab awake
+    }
+
+    func sleep(_ tab: Tab) {
+        guard tab.id != activeID, let wv = tab.webView else { return }
+        if let u = wv.url { tab.url = u }
+        tab.observations = []
+        wv.stopLoading()
+        wv.removeFromSuperview()
+        tab.webView = nil
+        tab.sleeping = true
+    }
 
     // MARK: Sidebar visibility
 
@@ -369,6 +440,7 @@ final class Browser: NSObject, ObservableObject {
         hidden = state.hidden
         // Lazy: only the active tab loads now; the rest load when clicked.
         tabs = state.tabs.map { Tab(url: URL(string: $0.url), title: $0.title, pinned: $0.pinned) }
+        tabs.forEach { $0.sleeping = true }
         for (t, s) in zip(tabs, state.tabs) { if let f = s.favicon.flatMap(URL.init(string:)) { setFavicon(t, f) } }
         activate(tabs[min(max(state.active, 0), tabs.count - 1)])
     }

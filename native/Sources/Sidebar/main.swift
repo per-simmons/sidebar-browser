@@ -163,6 +163,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         NSApp.activate()
 
         installMonitors()
+        b.startMemoryManagement()
         if let dir = ProcessInfo.processInfo.environment["SB_TEST"] { runSelfTest(dir) }
     }
 

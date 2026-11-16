@@ -170,6 +170,7 @@ struct TabRow: View {
         HStack(spacing: 9) {
             favicon
             Text(tab.displayTitle).lineLimit(1).truncationMode(.tail)
+                .opacity(tab.sleeping && !active ? 0.6 : 1)
             Spacer(minLength: 0)
             if hover {
                 Button { b.close(tab) } label: {
