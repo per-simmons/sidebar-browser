@@ -56,7 +56,9 @@ final class Browser: NSObject, ObservableObject {
     @Published var activeID: UUID?
     @Published var hidden = false
     @Published var peeking = false
-    @Published var inputMode: InputMode?
+    /// ⌘T (.newTab) shows the centered command bar; .url and .find use the sidebar box.
+    @Published var inputMode: InputMode? { didSet { if oldValue != inputMode { onInputModeChange?() } } }
+    var commandBarOpen: Bool { inputMode == .newTab }
     @Published var inputText = ""
     @Published var findNoMatch = false
     @Published var canGoBack = false
@@ -69,6 +71,7 @@ final class Browser: NSObject, ObservableObject {
     var onActiveChange: (() -> Void)?
     var focusSidebar: (() -> Void)?
     var focusPage: (() -> Void)?
+    var onInputModeChange: (() -> Void)?
 
     private var closedStack: [(SavedTab, Int)] = []
     private var faviconCache: [URL: NSImage] = [:]
@@ -318,6 +321,7 @@ final class Browser: NSObject, ObservableObject {
         case .url: inputText = active?.url?.absoluteString ?? ""
         case .newTab, .find: inputText = ""
         }
+        if mode == .newTab { return } // the command bar takes focus itself
         if hidden && !peeking { peeking = true; onLayoutChange?() }
         focusSidebar?()
     }

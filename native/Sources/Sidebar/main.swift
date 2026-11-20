@@ -11,11 +11,13 @@ final class ContainerView: NSView {
     let b: Browser
     let webHost = NSView()
     let sidebarHost: NSHostingView<SidebarView>
+    let commandHost: NSHostingView<CommandBarView>
     private let gradient = CAGradientLayer()
 
     init(browser: Browser) {
         b = browser
         sidebarHost = NSHostingView(rootView: SidebarView(b: browser))
+        commandHost = NSHostingView(rootView: CommandBarView(b: browser))
         super.init(frame: .zero)
         wantsLayer = true
         gradient.colors = [NSColor(red: 0.165, green: 0.149, blue: 0.208, alpha: 1).cgColor,
@@ -34,6 +36,21 @@ final class ContainerView: NSView {
         sidebarHost.sizingOptions = []
         sidebarHost.appearance = NSAppearance(named: .darkAqua)
         addSubview(sidebarHost) // above the page, so it can float over it when peeking
+
+        commandHost.sizingOptions = []
+        commandHost.appearance = NSAppearance(named: .darkAqua)
+        commandHost.isHidden = true
+        addSubview(commandHost) // topmost: the ⌘T pop-up covers page and sidebar
+    }
+
+    /// Show or hide the centered ⌘T command bar.
+    func updateCommandBar() {
+        let open = b.commandBarOpen
+        commandHost.frame = bounds
+        // Rebuild the SwiftUI tree on each open so the field starts focused and selection resets.
+        if open && commandHost.isHidden { commandHost.rootView = CommandBarView(b: b) }
+        commandHost.isHidden = !open
+        if open { window?.makeFirstResponder(commandHost) }
     }
     required init?(coder: NSCoder) { fatalError() }
 
@@ -47,6 +64,7 @@ final class ContainerView: NSView {
         CATransaction.setDisableActions(true)
         gradient.frame = bounds
         CATransaction.commit()
+        commandHost.frame = bounds
 
         let w = bounds.width, h = bounds.height
         let docked = !b.hidden
@@ -150,6 +168,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             self.window.makeKeyAndOrderFront(nil)
             self.window.makeFirstResponder(self.container.sidebarHost)
         }
+        b.onInputModeChange = { [weak self] in self?.container.updateCommandBar() }
         b.focusPage = { [weak self] in
             guard let self, let wv = self.b.active?.webView else { return }
             self.window.makeFirstResponder(wv)
@@ -179,11 +198,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return e
         }
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] e in
+            let mods = e.modifierFlags.intersection(.deviceIndependentFlagsMask)
             // Ctrl+Tab / Ctrl+Shift+Tab cycle tabs even when the page has focus.
-            guard e.keyCode == 48, e.modifierFlags.contains(.control) else { return e }
-            let back = e.modifierFlags.contains(.shift)
-            MainActor.assumeIsolated { self?.b.cycle(back ? -1 : 1) }
-            return nil
+            if e.keyCode == 48, mods.contains(.control) {
+                let back = mods.contains(.shift)
+                MainActor.assumeIsolated { self?.b.cycle(back ? -1 : 1) }
+                return nil
+            }
+            // ⌘⇧[ / ⌘⇧] previous / next tab (keyCode 33 = [, 30 = ]; matched by key so it works on any layout).
+            if mods == [.command, .shift], e.keyCode == 33 || e.keyCode == 30 {
+                let back = e.keyCode == 33
+                MainActor.assumeIsolated { self?.b.cycle(back ? -1 : 1) }
+                return nil
+            }
+            return e
         }
     }
 
@@ -288,8 +316,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             ClosureItem("Enter Full Screen", "f", [.command, .control]) { [weak self] in self?.window.toggleFullScreen(nil) },
         ])
         var tabItems: [NSMenuItem] = [
-            ClosureItem("Next Tab", "\u{F701}", [.command, .option]) { b.cycle(1) },
-            ClosureItem("Previous Tab", "\u{F700}", [.command, .option]) { b.cycle(-1) },
+            ClosureItem("Next Tab", "]", [.command, .shift]) { b.cycle(1) },
+            ClosureItem("Previous Tab", "[", [.command, .shift]) { b.cycle(-1) },
+            ClosureItem("Next Tab ", "\u{F701}", [.command, .option]) { b.cycle(1) },
+            ClosureItem("Previous Tab ", "\u{F700}", [.command, .option]) { b.cycle(-1) },
             ClosureItem("Pin / Unpin Tab", "d") { if let t = b.active { b.setPinned(t, !t.pinned) } },
             .separator(),
         ]
@@ -319,6 +349,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 b.newTab(URL(string: "https://news.ycombinator.com"), background: true)
                 if let first = b.tabs.first { b.setPinned(first, true) }
             }),
+            (7, { [b] in print("STEP cmdbar"); b.openInput(.newTab); b.inputText = "hacker" }),
+            (8.5, { [b] in print("STEP cycled"); b.closeInput(); b.cycle(1) }),
             (9, { [b] in print("STEP hidden"); b.toggleSidebar() }),
             (11, { [b] in print("STEP peek-input"); b.openInput(.url) }),
             (13, { [b] in print("STEP find"); b.closeInput(); b.openInput(.find); b.inputText = "browser" }),

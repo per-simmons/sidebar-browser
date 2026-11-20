@@ -44,13 +44,13 @@ struct SidebarView: View {
         .foregroundStyle(Color(white: 0.93))
         .environment(\.colorScheme, .dark)
         .onChange(of: b.inputMode) { _, mode in
-            if mode != nil { DispatchQueue.main.async { inputFocused = true } } else { inputFocused = false }
+            if mode != nil && mode != .newTab { DispatchQueue.main.async { inputFocused = true } } else { inputFocused = false }
         }
         .onChange(of: inputFocused) { _, focused in
             // Clicked away from the box: close it. Debounced so switching boxes (⌘L → ⌘F) doesn't close the new one.
             guard !focused else { return }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                if !inputFocused && b.inputMode != nil { b.closeInput() }
+                if !inputFocused && b.inputMode != nil && !b.commandBarOpen { b.closeInput() }
             }
         }
         .onChange(of: b.inputText) { _, _ in
@@ -77,7 +77,7 @@ struct SidebarView: View {
     }
 
     private var addressBox: some View {
-        let editing = b.inputMode != nil
+        let editing = b.inputMode != nil && !b.commandBarOpen
         return ZStack(alignment: .leading) {
             if editing {
                 HStack(spacing: 6) {
