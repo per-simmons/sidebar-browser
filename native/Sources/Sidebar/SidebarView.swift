@@ -11,6 +11,9 @@ struct SidebarView: View {
         VStack(spacing: 0) {
             topBar
             addressBox.padding(.horizontal, 10).padding(.bottom, 8)
+            if b.showingHistory {
+                HistoryPanel(b: b, history: b.history)
+            } else {
             ScrollViewReader { proxy in
                 ScrollView(.vertical, showsIndicators: false) {
                     VStack(spacing: 1) {
@@ -25,6 +28,7 @@ struct SidebarView: View {
                 .onChange(of: b.activeID) { _, id in
                     if let id { withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(id) } }
                 }
+            }
             }
             if let status = b.downloadStatus {
                 Text(status)

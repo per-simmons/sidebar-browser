@@ -8,7 +8,7 @@ struct CommandBarView: View {
     @State private var selection = 0
 
     struct Suggestion: Identifiable {
-        enum Kind { case go(URL), tab(Tab) }
+        enum Kind { case go(URL), tab(Tab), history(HistoryEntry) }
         let id: String
         let kind: Kind
         let icon: String
@@ -34,6 +34,14 @@ struct CommandBarView: View {
         for t in matches.prefix(6) {
             out.append(Suggestion(id: t.id.uuidString, kind: .tab(t), icon: "square.on.square",
                                   title: t.displayTitle, detail: "Switch to Tab"))
+        }
+        // Then pages from History that aren't already open (one per URL).
+        var seen = Set(b.tabs.compactMap { $0.url?.absoluteString })
+        for e in b.history.search(text, limit: 40) where !seen.contains(e.url) {
+            seen.insert(e.url)
+            out.append(Suggestion(id: "h-" + e.id.uuidString, kind: .history(e), icon: "clock",
+                                  title: e.displayTitle, detail: e.host))
+            if out.count >= 11 { break }
         }
         return out
     }
@@ -104,6 +112,10 @@ struct CommandBarView: View {
                 Image(nsImage: img).resizable().interpolation(.high)
                     .frame(width: 16, height: 16).clipShape(RoundedRectangle(cornerRadius: 3))
                     .frame(width: 22)
+            } else if case .history(let e) = s.kind, let img = b.favicon(forHost: e.host) {
+                Image(nsImage: img).resizable().interpolation(.high)
+                    .frame(width: 16, height: 16).clipShape(RoundedRectangle(cornerRadius: 3))
+                    .frame(width: 22)
             } else {
                 Image(systemName: s.icon).font(.system(size: 14, weight: .medium)).frame(width: 22).opacity(0.7)
             }
@@ -132,6 +144,7 @@ struct CommandBarView: View {
         switch s.kind {
         case .go: b.submitInput()
         case .tab(let t): b.closeInput(); b.activate(t)
+        case .history(let e): b.closeInput(); if let u = URL(string: e.url) { b.newTab(u) }
         }
     }
 }

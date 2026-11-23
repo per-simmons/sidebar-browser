@@ -64,6 +64,11 @@ final class Browser: NSObject, ObservableObject {
     @Published var canGoBack = false
     @Published var canGoForward = false
     @Published var downloadStatus: String?
+    /// ⌘Y: the sidebar shows History instead of the tab list.
+    @Published var showingHistory = false
+    let history = History()
+    /// Favicons seen while browsing, by host, so History rows can show them without fetching.
+    private(set) var faviconByHost: [String: NSImage] = [:]
     var dragging: Tab?
 
     /// Hooks wired up by the window controller.
@@ -109,13 +114,20 @@ final class Browser: NSObject, ObservableObject {
         tab.observations = [
             wv.observe(\.title, options: [.new]) { [weak self, weak tab] wv, _ in
                 MainActor.assumeIsolated {
-                    if let t = wv.title, !t.isEmpty { tab?.title = t }
+                    if let t = wv.title, !t.isEmpty {
+                        tab?.title = t
+                        if let u = wv.url { self?.history.updateTitle(u, t) }
+                    }
                     self?.save()
                 }
             },
             wv.observe(\.url, options: [.new]) { [weak self, weak tab] wv, _ in
                 MainActor.assumeIsolated {
-                    if let u = wv.url { tab?.url = u }
+                    if let u = wv.url {
+                        tab?.url = u
+                        // Same-page navigations (YouTube, X, Gmail…) change the URL without a new load.
+                        if !wv.isLoading { self?.history.record(u, title: wv.title ?? "") }
+                    }
                     self?.save()
                 }
             },
@@ -307,10 +319,39 @@ final class Browser: NSObject, ObservableObject {
 
     func setPeeking(_ on: Bool) {
         guard hidden, peeking != on else { return }
-        if !on && inputMode != nil { return } // keep it open while typing
+        if !on && (inputMode != nil || showingHistory) { return } // keep it open while typing / browsing history
         peeking = on
         onLayoutChange?()
     }
+
+    // MARK: History (⌘Y)
+
+    func toggleHistory() { showingHistory ? closeHistory() : openHistory() }
+
+    func openHistory() {
+        if inputMode != nil { closeInput() }
+        showingHistory = true
+        if hidden && !peeking { peeking = true; onLayoutChange?() }
+        focusSidebar?()
+    }
+
+    func closeHistory() {
+        guard showingHistory else { return }
+        showingHistory = false
+        focusPage?()
+        if hidden && peeking { peeking = false; onLayoutChange?() }
+    }
+
+    /// Open a History entry: new tab in front (closes History), or ⌘-click for a background tab.
+    func openFromHistory(_ e: HistoryEntry, background: Bool) {
+        guard let url = URL(string: e.url) else { return }
+        if background { newTab(url, background: true); return }
+        closeHistory()
+        if let existing = tabs.first(where: { $0.url?.absoluteString == e.url }) { activate(existing) }
+        else { newTab(url) }
+    }
+
+    func favicon(forHost host: String) -> NSImage? { faviconByHost[host] }
 
     // MARK: Address / find box
 
@@ -404,6 +445,10 @@ final class Browser: NSObject, ObservableObject {
                   let img = NSImage(data: data) else { return }
             self?.faviconCache[url] = img
             if tab?.faviconURL == url { tab?.favicon = img }
+            if var h = tab?.url?.host() {
+                if h.hasPrefix("www.") { h = String(h.dropFirst(4)) }
+                self?.faviconByHost[h] = img
+            }
             self?.save()
         }
     }
@@ -481,6 +526,10 @@ extension Browser: WKNavigationDelegate {
 
     func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse, didBecome download: WKDownload) {
         download.delegate = self
+    }
+
+    func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+        if let u = webView.url { history.record(u, title: webView.title ?? "") }
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {

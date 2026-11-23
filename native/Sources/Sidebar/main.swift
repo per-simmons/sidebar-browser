@@ -243,7 +243,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
-    func applicationWillTerminate(_ note: Notification) { b.saveNow() }
+    func applicationWillTerminate(_ note: Notification) { b.saveNow(); b.history.saveNow(sync: true) }
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         sender.orderOut(nil) // keep tabs alive; click the Dock icon to bring it back
@@ -303,6 +303,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         ])
         sub("View", [
             ClosureItem("Toggle Sidebar", "s") { b.toggleSidebar() },
+            ClosureItem("Show History", "y") { b.toggleHistory() },
             .separator(),
             ClosureItem("Reload", "r") { wv()?.reload() },
             ClosureItem("Hard Reload", "r", [.command, .shift]) { wv()?.reloadFromOrigin() },
@@ -354,8 +355,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             (9, { [b] in print("STEP hidden"); b.toggleSidebar() }),
             (11, { [b] in print("STEP peek-input"); b.openInput(.url) }),
             (13, { [b] in print("STEP find"); b.closeInput(); b.openInput(.find); b.inputText = "browser" }),
-            (15, { [b] in
-                b.closeInput(); b.toggleSidebar(); b.saveNow()
+            (15, { [b] in print("STEP history"); b.closeInput(); b.toggleSidebar(); b.openHistory() }),
+            (17, { [b] in print("STEP history-hidden"); b.closeHistory(); b.toggleSidebar(); b.openHistory() }),
+            (19, { [b] in print("STEP cmdbar-history"); b.closeHistory(); b.toggleSidebar(); b.openInput(.newTab); b.inputText = "browser" }),
+            (21, { [b] in
+                print("HISTORY", b.history.entries.map { "\($0.host) | \($0.title)" })
+                b.closeInput(); b.saveNow(); b.history.saveNow(sync: true)
                 print("STATE", (try? String(contentsOf: Browser.stateURL, encoding: .utf8))?.prefix(240) ?? "")
                 print("UA", b.active?.webView?.value(forKey: "userAgent") ?? "")
                 NSApp.terminate(nil)
